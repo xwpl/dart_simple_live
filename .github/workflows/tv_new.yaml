@@ -1,0 +1,72 @@
+name: app-build-action
+
+on:
+  push:
+    tags:
+      - "tv_*"
+
+env:
+  PROJECT_ROOT: simple_live_tv_app
+
+jobs:
+  build-tv:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4      # 自动落在 tag 上
+
+      - name: Download Android keystore
+        id: android_tv_keystore
+        uses: timheuer/base64-to-file@v1.2
+        with:
+          fileName: keystore.jks
+          encodedString: ${{ secrets.TV_KEYSTORE_BASE64 }}
+
+      - name: Create key.properties
+        run: |
+          echo "storeFile=${{ steps.android_tv_keystore.outputs.filePath }}" > ${{ env.PROJECT_ROOT }}/android/key.properties
+          echo "storePassword=${{ secrets.TV_STORE_PASSWORD }}" >> ${{ env.PROJECT_ROOT }}/android/key.properties
+          echo "keyPassword=${{ secrets.TV_KEY_PASSWORD }}" >> ${{ env.PROJECT_ROOT }}/android/key.properties
+          echo "keyAlias=${{ secrets.TV_KEY_ALIAS }}" >> ${{ env.PROJECT_ROOT }}/android/key.properties
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Flutter action
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22.x'
+          cache: true
+
+      - name: Restore packages
+        run: flutter pub get
+        working-directory: ${{ env.PROJECT_ROOT }}
+
+      - name: Build APK
+        run: flutter build apk --release --split-per-abi
+        working-directory: ${{ env.PROJECT_ROOT }}
+
+      - name: Upload APK to Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android_tv
+          path: ${{ env.PROJECT_ROOT }}/build/app/outputs/flutter-apk/app-*-release.apk
+
+      - name: Read version
+        id: version
+        uses: juliangruber/read-file-action@v1
+        with:
+          path: ${{ env.PROJECT_ROOT }}/assets/tv_app_version.json
+
+      - name: Upload Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: "${{ fromJson(steps.version.outputs.content).version }}"
+          body: "# Android TV \n${{ fromJson(steps.version.outputs.content).version_desc }}"
+          prerelease: ${{ fromJson(steps.version.outputs.content).prerelease }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          files: ${{ env.PROJECT_ROOT }}/build/app/outputs/flutter-apk/app-*-release.apk
